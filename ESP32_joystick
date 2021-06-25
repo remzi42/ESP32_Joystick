@@ -1,0 +1,231 @@
+#include "esp_wifi.h"
+#include <WiFi.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
+//#include "dl_lib_matrix3d.h"
+//#include <esp32-hal-ledc.h>
+//#include "esp_http_server.h"
+//#include "esp_timer.h"
+//#include "Arduino.h"
+
+const char* ssid = "ESP32CAM";
+const char* password = "12345678";
+int xx = 0;
+int yy = 0;
+
+const int MotPin1 = 14;
+const int MotPin2 = 15;
+
+void initMotors()
+{
+  ledcSetup(5, 2000, 8); // 2000 hz PWM, 8-bit resolution
+  ledcSetup(6, 2000, 8); // 2000 hz PWM, 8-bit resolution
+  ledcAttachPin(MotPin1, 5);
+  ledcAttachPin(MotPin2, 6);
+}
+
+void setup(){
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // prevent brownouts by silencing them
+
+  Serial.begin(115200);
+  Serial.setDebugOutput(true);
+  Serial.println();
+
+  // Remote Control Car
+  initMotors();
+
+  WiFi.softAP(ssid, password);
+  IPAddress miIP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(miIP); //probar 192.168.4.1
+
+        ledcWrite(5,0);     
+        ledcWrite(6,0);  
+ }
+
+
+static const char PROGMEM INDEX_HTML[] = R"rawliteral(
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+   <style> #joystickbase
+{
+  width:130px;
+  height:130px;
+   margin-left: 85px;
+   margin-top: 50px;
+   border: 1px solid blue; 
+   background: #23c890; 
+   border-radius: 65px;
+   text-align: center;
+   position: absolute;
+    }  
+  #joystick
+{
+  width:64px;
+  height:64px;
+   margin-left: 33px;
+   margin-top: 33px;
+   border: 1px solid blue; 
+   background: limegreen; 
+   border-radius: 65px;
+   text-align: center;
+   position: absolute;
+}    
+    </style>
+    </head>
+    <body>
+   <div id="background" style="width:300px; height:260px; background:#181818;">
+   <div  id="joystickbase">
+   <div id="joystick"></div>
+  </div>
+
+  <div id="status" style="color: #EFEFEF; position: absolute;   margin-top:230px; margin-left:65px;"></div>
+          
+<script>  // joystick from https://stemkoski.github.io/HTML-Joysticks/
+class JoystickController
+{
+  // stickID: ID of HTML element (representing joystick) that will be dragged
+  // maxDistance: maximum amount joystick can move in any direction
+  // deadzone: joystick must move at least this amount from origin to register value change
+  constructor(joystick, maxDistance, deadzone )
+  {
+    this.id = joystick;
+    let stick = document.getElementById(joystick);
+
+    // location from which drag begins, used to calculate offsets
+    this.dragStart = null;
+
+    // track touch identifier in case multiple joysticks present
+    this.touchId = null;
+    
+    this.active = false;
+    this.value = { x: 0, y: 0, speed1: 0 }; 
+
+    let self = this;
+
+    function handleDown(event)
+    {
+        self.active = true;
+
+      // all drag movements are instantaneous
+      stick.style.transition = '0s';
+
+      // touch event fired before mouse event; prevent redundant mouse event from firing
+      event.preventDefault();
+
+        if (event.changedTouches)
+          self.dragStart = { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY };
+        else
+          self.dragStart = { x: event.clientX, y: event.clientY };
+
+      // if this is a touch event, keep track of which one
+        if (event.changedTouches)
+          self.touchId = event.changedTouches[0].identifier;
+    }
+    
+    function handleMove(event) 
+    {
+        if ( !self.active ) return;
+
+        // if this is a touch event, make sure it is the right one
+        // also handle multiple simultaneous touchmove events
+        let touchmoveId = null;
+        if (event.changedTouches)
+        {
+          for (let i = 0; i < event.changedTouches.length; i++)
+          {
+            if (self.touchId == event.changedTouches[i].identifier)
+            {
+              touchmoveId = i;
+              event.clientX = event.changedTouches[i].clientX;
+              event.clientY = event.changedTouches[i].clientY;
+            }
+          }
+
+          if (touchmoveId == null) return;
+        }
+
+        const xDiff = event.clientX - self.dragStart.x;
+        const yDiff = event.clientY - self.dragStart.y;
+        const angle = Math.atan2(yDiff, xDiff);
+      const distance = Math.min(maxDistance, Math.hypot(xDiff, yDiff));
+      const xPosition = (distance * Math.cos(angle))*2/3 ;
+      const yPosition = (distance * Math.sin(angle))*2/3 ;
+
+      // move stick image to new position
+        stick.style.transform = `translate3d(${xPosition}px, ${yPosition}px, 0px)`;
+
+      // deadzone adjustment
+      const distance2 = (distance < deadzone) ? 0 : maxDistance / (maxDistance - deadzone) * (distance - deadzone);
+        const xPosition2 = distance2 * Math.cos(angle);
+      const yPosition2 = distance2 * Math.sin(angle);
+        const xPercent = parseFloat((xPosition2).toFixed());
+        const yPercent = parseFloat((yPosition2 * -1).toFixed());
+        
+        self.value = { x: xPercent, y: yPercent, speed1:  (distance*100/100).toFixed() };
+
+      }
+
+    function handleUp(event) 
+    {
+        if ( !self.active ) return;
+
+        // if this is a touch event, make sure it is the right one
+        if (event.changedTouches && self.touchId != event.changedTouches[0].identifier) return;
+
+        // transition the joystick position back to center
+        stick.style.transition = '.2s';
+        stick.style.transform = `translate3d(0px, 0px, 0px)`;
+
+        // reset everything
+        self.value = { x: 0, y: 0, speed1: 0};
+        self.touchId = null;
+        self.active = false;
+    }
+
+    stick.addEventListener('mousedown', handleDown);
+    stick.addEventListener('touchstart', handleDown);
+    document.addEventListener('mousemove', handleMove, {passive: false});
+    document.addEventListener('touchmove', handleMove, {passive: false});
+    document.addEventListener('mouseup', handleUp);
+    document.addEventListener('touchend', handleUp);
+  }
+}
+
+let joystick = new JoystickController("joystick", 100, 8);
+
+function update(){
+var text = JSON.stringify(joystick.value);
+var obj = JSON.parse(text); 
+document.getElementById("status").innerText = "x:" + obj.x + " " + "y:" + obj.y + " " + "speed:" + obj.speed1 ;
+xx = obj.x;  // how to pass this value to esp pin?
+yy = obj.y;  // how to pass this value to esp pin?
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  update();
+}
+
+loop();
+
+</script>
+</div>
+</body>
+</html>
+)rawliteral";
+
+
+void loop() {
+  delay(1000);
+  Serial.print(F("  "));
+  Serial.print(F("X coord:= "));
+  Serial.print(xx);
+  Serial.print(F("  "));
+  Serial.print(F("Y coord:= "));
+  Serial.print(yy);
+   
+        ledcWrite(5,xx);     
+        ledcWrite(6,yy);  
+}
